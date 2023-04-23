@@ -1,0 +1,356 @@
+---
+title: 'Spatial Analysis For Class Arachnida'
+author: "Nyx Zhang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Data: https://www.gbif.org/dataset/9c45867f-f77d-42f3-9751-ae16bb7c9bc8
+## Introduction 
+
+
+![Arachnida](https://upload.wikimedia.org/wikipedia/commons/b/bf/Arachnida_collage_%28Update%29.jpg)
+Firstly, we will investigate the spatial characteristics of the Arachnida class. Arachnida is a class of joint-legged invertebrate animals (arthropods), in the subphylum Chelicerata. Arachnida includes, among others, spiders, scorpions, ticks, mites, pseudoscorpions, harvestmen, camel spiders, whip spiders and vinegaroons.
+https://en.wikipedia.org/wiki/Arachnid  
+
+Secondly, within the Arachnida class, there are two primary orders to consider: Araneae and Opiliones. Although many people are familiar with spiders (Araneae), Opiliones, commonly referred to as "harvestmen," might be less known. There are some physiological differences between them.
+A primary distinction between spiders and Opiliones is that all spider species produce venom, whereas no known Opiliones species possess venom-producing glands. Although both arachnids have fang-like mouthparts, two pedipalps, and chelicerae, Opiliones lack true fangs, and their jaw muscles are insufficiently strong to penetrate human skin. Consequently, they pose no threat to humans.
+Furthermore, there is a notable difference in their feeding habits. Spiders typically liquefy their prey, allowing them to consume it through their hollow fangs. In contrast, Opiliones employ a different method, chewing and swallowing their food in a manner more akin to human consumption.
+https://www.bugs.com/blog/what-is-the-difference-between-spiders-and-opiliones/
+
+We will mainly explore the spacial differences between them. 
+
+![orders](https://www.bugs.com/wp-content/uploads/Difference-Between-Spiders-And-Opiliones.jpg)
+
+## Data Processing
+### Data Loading
+We got the data from the Global Biodiversity Information Facility (GBIF) data repository. 
+https://www.gbif.org/dataset/9c45867f-f77d-42f3-9751-ae16bb7c9bc8
+The data has the size of 749 rows and 50 columns, where the main information is the variety of the species, as well as the occurred coordinates and dates. However, there are no elevation data to be used.
+
+```{r load}
+library(spatstat)
+library(dplyr)
+
+# Arachnida <- name_backbone_checklist(Arachnida_$scientificName) # This function can only search by sentificName, so I use the downloaded file to find the taxonKey.
+
+spencer_data_raw <- read.csv("0185303-230224095556074.csv",row.names=NULL,sep='\t')
+Arachnida_raw <- spencer_data_raw[spencer_data_raw$class=='Arachnida'& spencer_data_raw$stateProvince=='Bc',]
+# Arachnida: 蛛形纲
+
+# Extract useful columns
+# spencer_data <- spencer_data_raw[,c('gbifID','datasetKey','occurrenceID','kingdom','phylum','class','order','family','genus','species','taxonRank','scientificName','verbatimScientificName','verbatimScientificNameAuthorship','countryCode','locality','stateProvince','occurrenceStatus','decimalLatitude','decimalLongitude','day','month','year','taxonKey')]
+
+
+# Remove the rows that have missing coordinates.
+Arachnida_org <- Arachnida_raw %>%
+  subset(!is.na(decimalLatitude) & !is.na(decimalLongitude))
+# sum(Arachnida_org$elevation)
+head(Arachnida_org)
+nrow(Arachnida_org)
+ncol(Arachnida_org)
+```
+### Reprojecting
+We transformed the coordinates from Lat Long, to BC Albers projection. 
+```{r reproject}
+library(sp)
+coords <- Arachnida_org[, c("decimalLongitude", "decimalLatitude")]
+points_wgs84 <- SpatialPoints(coords)
+
+# Set the CRS for the points
+crs_wgs84 <- CRS("+proj=longlat +datum=WGS84 +no_defs")
+proj4string(points_wgs84) <- crs_wgs84
+
+# Define BC Albers projection string
+bc_albers_proj4 <- "+proj=aea +lat_0=45 +lon_0=-126 +lat_1=50 +lat_2=58.5 +x_0=1000000 +y_0=0 +datum=NAD83 +units=m +no_defs"
+
+# Reproject points to BC Albers
+points_bc_albers <- spTransform(points_wgs84, CRS(bc_albers_proj4))
+
+reprojected_coords <- as.data.frame(coordinates(points_bc_albers))
+Arachnida_crs <- Arachnida_org
+Arachnida_crs[,c('decimalLongitude','decimalLatitude')] <- reprojected_coords
+head(Arachnida_crs[,c('decimalLongitude','decimalLatitude')] )
+```
+## First Moment Descriptives
+The First Moment Descriptives includes measures that describe the center or location of the spatial data distribution. This includes the mean, median, and mode. The mean represents the average value of Arachnida density across the study area, while the median represents the midpoint of the data distribution, and the mode represents the most frequently occurring value. These measures provide insights into the central tendency of Arachnida density in the study area.
+The dataset shows that Araneae have 675 occurrences and Opiliones have 74 occurrences.  Notably, in 1982, there is a substantial increase in the number of recorded Araneae occurrences, which may suggest potential measurement bias, thus affecting the confidence in the absolute numbers or proportions. Nevertheless, by examining the trendline over the years, it can still be inferred that Araneae are more abundant than Opiliones in the region. Various factors could contribute to this disparity, such as differences in habitat preferences, population sizes, or environmental conditions.
+
+### Count Statistics 
+Orders in the Araneae family that contribute more than 5% to the total Arachnida class include Lycosidae (26.97%), Gnaphosidae (17.62%), Theridiidae (7.74%), Salticidae (7.21%), and Thomisidae (6.81%). In the case of the Opiliones order, only the Phalangiidae family reaches a proportion above 5%, accounting for 7.61% of the total class.
+
+```{r groups}
+order_count <- Arachnida_crs %>% group_by(order) %>% summarise(count = n(),.groups = 'drop') %>% mutate(share = round((count / sum(count)), 4)) %>% arrange(desc(count))
+family_count <- Arachnida_crs %>% group_by(order,family)  %>% summarise(count = n(),.groups = 'drop') %>% mutate(share = round((count / sum(count)), 4)) %>% arrange(desc(count))
+# genus_count <- Arachnida_crs %>%group_by(order,family,genus)  %>% summarise(count = n(),.groups = 'drop') %>% mutate(share = round((count / sum(count)), 4)) %>% arrange(desc(count))
+year_count <- Arachnida_crs %>% group_by(order,year)  %>% summarise(count = n(),.groups = 'drop') %>% mutate(share = round((count / sum(count)), 4)) %>% arrange(desc(count))
+month_count <- Arachnida_crs %>% group_by(order,month)  %>% summarise(count = n(),.groups = 'drop') %>% mutate(share = round((count / sum(count)), 4)) %>% arrange(month)
+
+order_count
+
+# family
+family_count <- data.frame(family=paste(family_count$family,'(',substr(family_count$order,1,2),')-',family_count$share*100,'%'),
+                           share=family_count$share)
+family_count_filtered <- family_count[family_count$share >= 0.05,c('family','share')]
+family_count_new_row <- data.frame(family = "< 0.05", 
+                                   share = sum(family_count$share[family_count$share < 0.05]))
+family_count_new<- rbind(family_count_filtered, family_count_new_row)
+
+pie(family_count_new$share, 
+    labels =family_count_new$family, 
+    col = rainbow(length(family_count_new$share)),
+    main = "Families Percentage")
+names(family_count$family)
+
+# genus_count
+# time
+library(ggplot2)
+
+
+# Create the line plot
+plot_year <- ggplot(data.frame(year_count), aes(x = as.character(year), y = count, group = order, color = order,bin=10)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Counts of Arachnida over Years by Order",
+       x = "Year",
+       y = "Count") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) 
+  # theme_minimal()
+print(plot_year)
+
+plot_month <- ggplot(data.frame(month_count), aes(x = factor(month), y = count, group = order, color = order)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Count of Arachnida over Months by Order",
+       x = "Month",
+       y = "Count") +
+  theme_minimal()
+print(plot_month)
+```
+
+### distribution plot
+We drew the distribution plots and marked by the two orders.
+```{r ppp}
+load("BC_Covariates.Rda")
+library(maptools)
+
+Arachnida_ppp <- ppp(x = Arachnida_crs$decimalLongitude, 
+                   y = Arachnida_crs$decimalLatitude,
+                   window = as.owin(DATA$Window),
+                   marks = Arachnida_crs$order,
+                   check = F)
+
+
+# Preview the point pattern object
+plot(Arachnida_ppp,
+     col = "grey30",
+     main='Arachnida in BC',
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1)
+     )
+
+
+```
+
+
+### Intensity
+Araneae has a higher intensity (7.118283e-10) compared to both Opiliones (7.803747e-11) and the overall Arachnida class (7.803747e-11). This means that Araneae are more densely distributed or concentrated in the area under study than Opiliones.
+
+```{r intensity}
+intensity(Arachnida_ppp)
+intensity(Arachnida_ppp[Arachnida_ppp$marks=='Araneae'])
+intensity(Arachnida_ppp[Arachnida_ppp$marks=='Opiliones'])
+```
+
+### Quadratcount
+According to the 5 by 5 Quadratcount, most of the Arachnida are spotted in the South Middle areas of BC. And most of Araneae are found in the South Middle. whereas Opiliones occur in the South East.
+
+The whole Arachnida mainly
+```{r Quadratcount}
+Q_5 <- quadratcount(Arachnida_ppp,
+                  nx = 5,
+                  ny = 5)
+
+Q_A <- quadratcount(Arachnida_ppp[Arachnida_ppp$marks=='Araneae'],
+                  nx = 5,
+                  ny = 5)
+
+Q_O <- quadratcount(Arachnida_ppp[Arachnida_ppp$marks=='Opiliones'],
+                  nx = 5,
+                  ny = 5)
+
+```
+
+```{r Arachnida.Quadratcount.PLot}
+par(mfrow=c(1,2))
+plot(Arachnida_ppp,
+     pch = c(16,17),
+     cex = c(0.7,1),
+     cols = c('bisque2','cornflowerblue'),
+     main = " Arachnida Quadratcount")
+plot(Q_5, cex = 1, col = "red", add = T)
+
+plot(intensity(Q_5, image = T),
+     main = "Arachnida Intensity")
+plot(Arachnida_ppp,
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+
+# legend("topleft",c('Araneae','Opiliones'), fill=c('bisque2','cornflowerblue'), cex=0.8)
+
+```
+
+```{r orders.Quadratcount.plot}
+par(mfrow=c(1,2))
+plot(Arachnida_ppp[Arachnida_ppp$marks=='Araneae'],
+     pch = 16,
+     cex = 0.8,
+     cols = 'bisque2',
+     main = " Araneae Quadratcount")
+
+plot(Q_A, cex = 1, col = "red", add = T)
+plot(Arachnida_ppp[Arachnida_ppp$marks=='Opiliones'],
+     pch = 17,
+     cex = 0.8,
+     cols = 'cornflowerblue',
+     main = " Opiliones Quadratcount")
+plot(Q_O, cex = 1, col = "red", add = T)
+
+```
+### Chi-Squared Analysis
+Then we perform an objective test to assess spatial (in)homogeneity. By conducting a Chi-square test, we evaluate whether the observed deviations are statistically significant. The null hypothesis of this test suggests homogeneity. All the results perform small p-value lower than  2.2e-16, suggesting that we have strong confidence that there is inhomogeneity in locations of Arachnida, Araneae and Opiliones.
+
+```{r quadrat.test}
+quadrat.test(Q_5)
+quadrat.test(Q_A)
+quadrat.test(Q_O)
+```
+### Kernel estimation
+
+```{r Kernel}
+#Density estimation of lambda(u)
+lambda_u_hat <- density(Arachnida_ppp)
+
+#Plot the output Note the use of image = TRUE
+plot(lambda_u_hat,
+     main = "Kernel estimate of Arachnida intensity")
+
+plot(Arachnida_ppp,
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+
+legend("topleft",c('Araneae','Opiliones'), fill=c('bisque2','cornflowerblue'), cex=0.8)
+```
+## Covariates Analysis
+From the four plots, it is roughly seen that the distribution of Arachnida is influenced by factors such as Human Footprint (HFI), Forest cover, Distance to Water (Dist_Water), and Elevation. Arachnida tend to be found in areas with lower human footprint, sparser forest cover, greater distance from water sources, and lower elevations. This suggests that Arachnida prefer inhabiting undisturbed, arid, and relatively flat terrains.
+```{r Covariates}
+par(mfrow=c(2,2))
+plot(DATA$HFI, box = F, par(cex.main = 1), main = "HFI")
+plot(Arachnida_ppp,
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+legend("topleft",c('Araneae','Opiliones'), fill=c('bisque2','cornflowerblue'), cex=0.8)
+
+plot(DATA$Forest, box = F, par(cex.main = 1), main = "Forest")
+plot(Arachnida_ppp,
+     cols = c('black','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+legend("topleft",c('Araneae','Opiliones'), fill=c('black','cornflowerblue'), cex=0.8)
+
+plot(DATA$Dist_Water, box = F, par(cex.main = 1), main = "Dist_Water")
+plot(Arachnida_ppp,
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+legend("topleft",c('Araneae','Opiliones'), fill=c('bisque2','cornflowerblue'), cex=0.8)
+
+plot(DATA$Elevation, box = F, par(cex.main = 1), main = "Elevation")
+plot(Arachnida_ppp,
+     cols = c('bisque2','cornflowerblue'),
+     pch = c(16,17),
+     cex = c(0.7,1),
+     add = T)
+legend("topleft",c('Araneae','Opiliones'), fill=c('bisque2','cornflowerblue'), cex=0.8)
+```
+## Second Moment Descriptive
+The Second Moment Descriptives includes measures that describe the variability or spread of the Arachnida density distribution in the study area. This includes measures such as variance, standard deviation, and range. The variance represents the average distance between each value and the mean, while the standard deviation represents the square root of the variance. The range is the difference between the maximum and minimum values of Arachnida density in the study area. These measures provide insights into the degree of variability in Arachnida density across the study area.
+
+
+### Morisita's Index plot
+This index should be close to 1 if points are independent of one another, lower than 1 if there is avoidance, and greater than 1 if there is attraction. This figure shows evidence of substantial clustering in the locations where Arachnida grows in Panama, however, the derivations assume homogeneity. 
+```{r Morisita}
+Arachnida_ppp_sq <- ppp(x = Arachnida_crs$decimalLongitude, 
+                   y = Arachnida_crs$decimalLatitude,
+                   window = owin(c(min(Arachnida_crs$decimalLongitude),max( Arachnida_crs$decimalLongitude)),
+                                 c(min(Arachnida_crs$decimalLatitude),max(Arachnida_crs$decimalLatitude))),
+                   marks = Arachnida_crs$order,
+                   check = F)
+miplot(Arachnida_ppp_sq,main="Morisita's Index plot",col = "#046C9A",ylim=c(0,100))
+```
+
+### Ripley's K function
+For the spacing (or distance) between points, we calculated the Ripley's K function, which is a function of the area of a circle with radius r. Any deviations between the empirical and theoretical K-functions can show an indication of correlations between points.
+From the plot, significant clustering only appears to exist in and around 0-15000 meters.  
+```{r Ripley.s.K}
+#Estimate a strictly positive density
+lambda_Arachnida_pos <- density(Arachnida_ppp_sq,
+                          sigma=bw.ppl,
+                          positive=TRUE)
+
+#Simulation envelope (with points drawn from the estimated intensity)
+E_Arachnida_inhom <- envelope(Arachnida_ppp_sq,
+                        Kinhom,
+                        simulate = expression(rpoispp(lambda_Arachnida_pos)),
+                        correction="border",
+                        rank = 1,
+                        nsim = 19,
+                        fix.n = TRUE)
+par(mfrow = c(1,2))
+plot(E_Arachnida_inhom,
+     main = "Ripley's K function",
+     lwd = 2)
+plot(E_Arachnida_inhom,
+     main = "Zoomed Out",
+     lwd = 2,
+     xlim=c(0,20000))
+```
+
+### Pair Correlation Function
+The Pair Correlation Function is a statistical method used in spatial analysis to measure the degree of clustering or dispersion of objects in a spatial point pattern. The PCF compares the observed distribution of objects with the distribution that would be expected if the objects were randomly distributed, and computes a summary statistic that reflects the degree of clustering or dispersion.
+Under CSR, g(r) has an expected value of 1, values <1 indicate fewer points with separation distance r than expected (i.e. avoidance), and vice versa for g(r)>1.
+From the plot, there appear to be more Arachnidas than expected by random chance between 0 - 4000 meters. And fewer between 6000 meters and beyond. Between 4000 - 6000 meters, the locations of Arachnidas appear not to exhibit any significant correlations.
+
+```{r PairCorrelationFunction}
+# Estimate the g function
+pcf_Arachnida <- pcf(Arachnida_ppp_sq)
+
+pcf_Arachnida_inhom <- envelope(Arachnida_ppp_sq,
+                          pcfinhom,
+                          simulate = expression(rpoispp(lambda_Arachnida_pos)),
+                          rank = 1,
+                          nsim = 19)
+par(mfrow = c(1,2))
+
+plot(pcf_Arachnida_inhom,main='Pair Correlation Function')
+# Zoom in on range where significant deviations appear
+
+plot(pcf_Arachnida_inhom,
+     xlim = c(0,3e+4),
+     main='Zoomed Out',
+     lwd = 2)
+```
+
+## Conclusion
